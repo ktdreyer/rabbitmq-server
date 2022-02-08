@@ -157,11 +157,15 @@ init_per_group(Group, Config0) ->
                         Config, [ {rmq_nodename_suffix, Group},
                                   {rmq_nodes_count, ClusterSize}
                                 ]),
-            rabbit_ct_helpers:run_steps(Config1,
+            Config2 = rabbit_ct_helpers:run_steps(Config1,
                                         rabbit_ct_broker_helpers:setup_steps() ++
-                                        rabbit_ct_client_helpers:setup_steps());
+                                        rabbit_ct_client_helpers:setup_steps()),
+            rabbit_ct_broker_helpers:enable_feature_flag(Config2, raft_based_metadata_store_phase1),
+            Config2;
         false ->
-            rabbit_ct_helpers:run_steps(Config0, [])
+            Config1 = rabbit_ct_helpers:run_steps(Config0, []),
+            rabbit_ct_broker_helpers:enable_feature_flag(Config1, raft_based_metadata_store_phase1),
+            Config1
     end.
 
 end_per_group(Group, Config) ->
@@ -760,9 +764,7 @@ set_queue_options(Config, QName, Options) ->
     rabbit_ct_broker_helpers:rpc(Config, 0, ?MODULE, set_queue_options1, [QName, Options]).
 
 set_queue_options1(QName, Options) ->
-    rabbit_misc:execute_mnesia_transaction(fun() ->
-        rabbit_amqqueue:update(rabbit_misc:r(<<"/">>, queue, QName),
-            fun(Q) ->
-                amqqueue:set_options(Q, Options)
-            end)
-    end).
+    rabbit_amqqueue:update_in_tx(rabbit_misc:r(<<"/">>, queue, QName),
+                                 fun(Q) ->
+                                         amqqueue:set_options(Q, Options)
+                                 end).

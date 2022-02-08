@@ -167,6 +167,7 @@ init_per_group1(Group, Config) ->
         {skip, _} ->
             Ret;
         Config2 ->
+            rabbit_ct_broker_helpers:enable_feature_flag(Config2, raft_based_metadata_store_phase1),
             EnableFF = rabbit_ct_broker_helpers:enable_feature_flag(
                          Config2, stream_queue),
             case EnableFF of

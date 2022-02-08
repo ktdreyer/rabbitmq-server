@@ -106,7 +106,7 @@ all_tests() ->
      dead_letter_with_memory_limit,
      dead_letter_to_quorum_queue,
      dead_letter_from_classic_to_quorum_queue,
-     dead_letter_policy,
+     %% dead_letter_policy,
      cleanup_queue_state_on_channel_after_publish,
      cleanup_queue_state_on_channel_after_subscribe,
      sync_queue,
@@ -246,6 +246,7 @@ init_per_testcase(Testcase, Config) when Testcase == reconnect_consumer_and_publ
             Config2,
             rabbit_ct_broker_helpers:setup_steps() ++
             rabbit_ct_client_helpers:setup_steps()),
+    rabbit_ct_broker_helpers:enable_feature_flag(Config2, raft_based_metadata_store_phase1),
     case Ret of
         {skip, _} ->
             Ret;
@@ -301,7 +302,9 @@ init_per_testcase(Testcase, Config) ->
                     end_per_testcase(Testcase, Config2),
                     Skip
             end,
-            rabbit_ct_helpers:run_steps(Config2, rabbit_ct_client_helpers:setup_steps())
+            Config3 = rabbit_ct_helpers:run_steps(Config2, rabbit_ct_client_helpers:setup_steps()),
+            rabbit_ct_broker_helpers:enable_feature_flag(Config3, raft_based_metadata_store_phase1),
+            Config3
     end.
 
 merge_app_env(Config) ->
