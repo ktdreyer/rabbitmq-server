@@ -7,6 +7,7 @@
 
 -module(rabbit_exchange_type_topic).
 
+-include_lib("khepri/include/khepri.hrl").
 -include_lib("rabbit_common/include/rabbit.hrl").
 
 -behaviour(rabbit_exchange_type).
@@ -74,7 +75,7 @@ remove_bindings(transaction, _X, Bs) ->
     [case follow_down_get_path(X, split_topic_key(K)) of
          {ok, Path = [{FinalNode, _} | _]} ->
              trie_remove_binding(X, FinalNode, D, Args),
-             remove_path_if_empty(X, Path);
+             remove_path_if_empty_in_mnesia(X, Path);
          {error, _Node, _RestW} ->
              %% We're trying to remove a binding that no longer exists.
              %% That's unexpected, but shouldn't be a problem.
@@ -150,14 +151,24 @@ follow_down(X, CurNode, AccFun, Acc, Words = [W | RestW]) ->
         error          -> {error, Acc, Words}
     end.
 
-remove_path_if_empty(_, [{root, none}]) ->
+remove_path_if_empty_in_mnesia(_, [{root, none}]) ->
     ok;
-remove_path_if_empty(X, [{Node, W} | [{Parent, _} | _] = RestPath]) ->
+remove_path_if_empty_in_mnesia(X, [{Node, W} | [{Parent, _} | _] = RestPath]) ->
     case mnesia:read(rabbit_topic_trie_node,
                      #trie_node{exchange_name = X, node_id = Node}, write) of
-        [] -> trie_remove_edge(X, Parent, Node, W),
-              remove_path_if_empty(X, RestPath);
+        [] -> trie_remove_edge_in_mnesia(X, Parent, Node, W),
+              remove_path_if_empty_in_mnesia(X, RestPath);
         _  -> ok
+    end.
+
+remove_path_if_empty_in_khepri(_, [{root, none}]) ->
+    ok;
+remove_path_if_empty_in_khepri(X, [{Node, W} | [{Parent, _} | _] = RestPath]) ->
+    Path = khepri_topic_trie_node_path(X, Node),
+    case khepri_tx:get(Path) of
+        {ok, #{Path := _}} -> ok;
+        _ -> trie_remove_edge_in_khepri(X, Parent, Node, W),
+             remove_path_if_empty_in_khepri(X, RestPath)
     end.
 
 trie_child(X, Node, Word) ->
@@ -177,7 +188,7 @@ trie_bindings(X, Node) ->
                                    arguments     = '_'}},
     mnesia:select(rabbit_topic_trie_binding, [{MatchHead, [], ['$1']}]).
 
-trie_update_node_counts(X, Node, Field, Delta) ->
+trie_update_node_counts_in_mnesia(X, Node, Field, Delta) ->
     E = case mnesia:read(rabbit_topic_trie_node,
                          #trie_node{exchange_name = X,
                                     node_id       = Node}, write) of
@@ -195,12 +206,33 @@ trie_update_node_counts(X, Node, Field, Delta) ->
             ok = mnesia:write(rabbit_topic_trie_node, EN, write)
     end.
 
+trie_update_node_counts_in_khepri(X, Node, Field, Delta) ->
+    Path = khepri_topic_trie_node_path(X, Node),
+    E = case khepri_tx:get(Path) of
+            {ok, #{Path := #{data := E0}}} -> E0;
+            _   -> #topic_trie_node{trie_node = #trie_node{
+                                                   exchange_name = X,
+                                                   node_id       = Node},
+                                    edge_count    = 0,
+                                    binding_count = 0}
+        end,
+    case setelement(Field, E, element(Field, E) + Delta) of
+        #topic_trie_node{edge_count = 0, binding_count = 0} ->
+            ok = khepri_tx:delete(Path);
+        EN ->
+            {ok, _} = khepri_tx:put(Path, #kpayload_data{data = EN})
+    end.
+
 trie_add_edge(X, FromNode, ToNode, W) ->
-    trie_update_node_counts(X, FromNode, #topic_trie_node.edge_count, +1),
+    trie_update_node_counts_in_mnesia(X, FromNode, #topic_trie_node.edge_count, +1),
     trie_edge_op(X, FromNode, ToNode, W, fun mnesia:write/3).
 
-trie_remove_edge(X, FromNode, ToNode, W) ->
-    trie_update_node_counts(X, FromNode, #topic_trie_node.edge_count, -1),
+trie_remove_edge_in_mnesia(X, FromNode, ToNode, W) ->
+    trie_update_node_counts_in_mnesia(X, FromNode, #topic_trie_node.edge_count, -1),
+    trie_edge_op(X, FromNode, ToNode, W, fun mnesia:delete_object/3).
+
+trie_remove_edge_in_khepri(X, FromNode, ToNode, W) ->
+    trie_update_node_counts_in_khepri(X, FromNode, #topic_trie_node.edge_count, -1),
     trie_edge_op(X, FromNode, ToNode, W, fun mnesia:delete_object/3).
 
 trie_edge_op(X, FromNode, ToNode, W, Op) ->
@@ -212,11 +244,11 @@ trie_edge_op(X, FromNode, ToNode, W, Op) ->
             write).
 
 trie_add_binding(X, Node, D, Args) ->
-    trie_update_node_counts(X, Node, #topic_trie_node.binding_count, +1),
+    trie_update_node_counts_in_mnesia(X, Node, #topic_trie_node.binding_count, +1),
     trie_binding_op(X, Node, D, Args, fun mnesia:write/3).
 
 trie_remove_binding(X, Node, D, Args) ->
-    trie_update_node_counts(X, Node, #topic_trie_node.binding_count, -1),
+    trie_update_node_counts_in_mnesia(X, Node, #topic_trie_node.binding_count, -1),
     trie_binding_op(X, Node, D, Args, fun mnesia:delete_object/3).
 
 trie_binding_op(X, Node, D, Args, Op) ->
@@ -264,3 +296,9 @@ split_topic_key(<<$., Rest/binary>>, RevWordAcc, RevResAcc) ->
     split_topic_key(Rest, [], [lists:reverse(RevWordAcc) | RevResAcc]);
 split_topic_key(<<C:8, Rest/binary>>, RevWordAcc, RevResAcc) ->
     split_topic_key(Rest, [C | RevWordAcc], RevResAcc).
+
+khepri_topic_trie_node_path(#resource{virtual_host = VHost, name = Name}, NodeId) ->
+    [?MODULE, topic_trie_nodes, VHost, Name, NodeId].
+
+khepri_topic_trie_edge_path(#resource{virtual_host = VHost, name = Name}, NodeId) ->
+    [?MODULE, topic_trie_edges, VHost, Name, NodeId].

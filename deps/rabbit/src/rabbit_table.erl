@@ -344,16 +344,6 @@ definitions() ->
        {type, ordered_set},
        {match, #reverse_route{reverse_binding = reverse_binding_match(),
                               _='_'}}]},
-     {rabbit_topic_trie_node,
-      [{record_name, topic_trie_node},
-       {attributes, record_info(fields, topic_trie_node)},
-       {type, ordered_set},
-       {match, #topic_trie_node{trie_node = trie_node_match(), _='_'}}]},
-     {rabbit_topic_trie_edge,
-      [{record_name, topic_trie_edge},
-       {attributes, record_info(fields, topic_trie_edge)},
-       {type, ordered_set},
-       {match, #topic_trie_edge{trie_edge = trie_edge_match(), _='_'}}]},
      {rabbit_topic_trie_binding,
       [{record_name, topic_trie_binding},
        {attributes, record_info(fields, topic_trie_binding)},
@@ -417,7 +407,17 @@ pre_khepri_definitions() ->
      {rabbit_exchange_serial,
       [{record_name, exchange_serial},
        {attributes, record_info(fields, exchange_serial)},
-       {match, #exchange_serial{name = exchange_name_match(), _='_'}}]}
+       {match, #exchange_serial{name = exchange_name_match(), _='_'}}]},
+     {rabbit_topic_trie_node,
+      [{record_name, topic_trie_node},
+       {attributes, record_info(fields, topic_trie_node)},
+       {type, ordered_set},
+       {match, #topic_trie_node{trie_node = trie_node_match(), _='_'}}]},
+     {rabbit_topic_trie_edge,
+      [{record_name, topic_trie_edge},
+       {attributes, record_info(fields, topic_trie_edge)},
+       {type, ordered_set},
+       {match, #topic_trie_edge{trie_edge = trie_edge_match(), _='_'}}]}
     ].
 
 binding_match() ->
